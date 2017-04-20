@@ -30,6 +30,8 @@ mkdir -p /tmp/outputs
 s3fs -o "use_cache=/tmp/bids_dataset" -o "allow_other" -o "iam_role=auto" $BIDS_DIR_BUCKET /bids_dataset
 s3fs -o "use_cache=/tmp/outputs" -o "allow_other" -o "iam_role=auto" $OUTPUT_DIR_BUCKET /outputs
 
+mount
+
 ls -lh /bids_dataset
 ls -lh /outputs
 
