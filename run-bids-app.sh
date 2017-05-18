@@ -36,6 +36,10 @@ ARGUMENTS_ARRAY=( "$BIDS_ARGUMENTS" )
 # Pull once, if pull fails, try to prune, if the second pull fails this will exit early
 docker pull "$BIDS_CONTAINER" || { docker system prune --all --force && docker pull "$BIDS_CONTAINER"; }
 
+ls -lh /bids_dataset
+ls -lh /outputs
+mount
+
 exec docker run -i --rm \
    -v /bids_dataset/"$BIDS_SNAPSHOT_ID":/bids_dataset:ro \
    -v /outputs/"$BIDS_SNAPSHOT_ID"/"$BIDS_ANALYSIS_ID":/outputs \
