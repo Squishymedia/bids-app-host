@@ -1,0 +1,175 @@
+# Contributor: Łukasz Jendrysik <scadu@yandex.com>
+# Maintainer: Natanael Copa <ncopa@alpinelinux.org>
+pkgname=busybox
+pkgver=1.26.2
+pkgrel=4
+pkgdesc="Size optimized toolbox of many common UNIX utilities"
+url=http://busybox.net
+arch="all"
+license="GPL2"
+makedepends_build=""
+makedepends_host="linux-headers"
+makedepends="$makedepends_build $makedepends_host"
+checkdepends="zip"
+install="$pkgname.post-install $pkgname.post-upgrade"
+subpackages="$pkgname-static $pkgname-suid"
+options="suid !check"
+triggers="busybox.trigger=/bin:/usr/bin:/sbin:/usr/sbin:/lib/modules/*"
+source="http://busybox.net/downloads/$pkgname-$pkgver.tar.bz2
+	0001-ash-exec-busybox.static.patch
+	0002-app-location-for-vi-and-lspci.patch
+	0003-udhcpc-set-default-discover-retries-to-5.patch
+	0004-ping-make-ping-work-without-root-privileges.patch
+	0005-fbsplash-support-console-switching.patch
+	0006-fbsplash-support-image-and-bar-alignment-and-positio.patch
+	0007-depmod-support-generating-kmod-binary-index-files.patch
+	0008-login-move-check_securetty-to-libbb.patch
+	0009-libbb-allow_blank-argument-for-ask_and_check_passwor.patch
+	0010-su-FEATURE_SU_NULLOK_SECURE.patch
+	0011-ntpd-postpone-hostname-resolution-if-fails-on-startu.patch
+	0012-diff-add-support-for-no-dereference.patch
+	0013-ash-make-shellexec-capable-of-using-separate-argv-0-.patch
+	0014-ash-implement-exec-a-ARGV0-CMD-ARGV1.patch
+	0015-syslogd-adjust-timezone-option.patch
+	udhcpc.patch
+
+	fix-tests.patch
+	location-for-cpio.patch
+
+	acpid.logrotate
+	busyboxconfig
+	bbsuid.c
+	dad.if-up
+	nologin.c
+	"
+builddir="$srcdir"/$pkgname-$pkgver
+
+_staticdir="$srcdir"/build-static
+_dyndir="$srcdir"/build-dynamic
+_config="$srcdir"/busyboxconfig
+
+prepare() {
+	default_prepare
+
+	cd "$builddir"
+	mkdir -p "$_staticdir" "$_dyndir"
+	cp "$srcdir"/nologin.c loginutils/
+}
+
+build() {
+	# build bbsuid
+	msg "Building bbsuid"
+	${CC:-${CROSS_COMPILE}gcc} ${CPPFLAGS} ${CFLAGS} \
+		${LDFLAGS} "$srcdir"/bbsuid.c -o "$_dyndir"/bbsuid
+
+	# build dynamic
+	cd "$_dyndir"
+	msg "Building dynamic busybox"
+	cp "$_config" .config
+	[ "$CLIBC" = musl ] && sed -i \
+		-e "s/CONFIG_EXTRA_COMPAT=y/CONFIG_EXTRA_COMPAT=n/" \
+		.config
+	make -C "$builddir" O="$PWD" silentoldconfig
+	make
+
+	# build static
+	cd "$_staticdir"
+	msg "Building static busybox"
+	sed -e "s/.*CONFIG_PIE.*/\# CONFIG_PIE is not set/" \
+		-e "s/.*CONFIG_STATIC.*/CONFIG_STATIC=y/" \
+		"$_config" > .config
+	# musl does not support GNU regex
+	[ "$CLIBC" = musl ] && sed -i \
+		-e "s/CONFIG_EXTRA_COMPAT=y/CONFIG_EXTRA_COMPAT=n/" \
+		.config
+	make -C "$builddir" O="$PWD" silentoldconfig
+	make
+	mv busybox busybox.static
+}
+
+check() {
+       cd "$_dyndir"
+       SKIP_KNOWN_BUGS=1 make -C "$builddir" O="$PWD" V=1 check
+}
+
+package() {
+	cd "$_dyndir"
+	mkdir -p "$pkgdir"/usr/sbin "$pkgdir"/usr/bin "$pkgdir"/tmp \
+		"$pkgdir"/var/cache/misc "$pkgdir"/bin "$pkgdir"/sbin
+	chmod 1777 "$pkgdir"/tmp
+	install -m755 busybox "$pkgdir"/bin/busybox || return 1
+	# we need /bin/sh to be able to execute post-install
+	ln -s /bin/busybox "$pkgdir"/bin/sh
+
+	#ifupdown needs those dirs to be present
+	mkdir -p \
+		"$pkgdir"/etc/network/if-down.d \
+		"$pkgdir"/etc/network/if-post-down.d \
+		"$pkgdir"/etc/network/if-post-up.d \
+		"$pkgdir"/etc/network/if-pre-down.d \
+		"$pkgdir"/etc/network/if-pre-up.d \
+		"$pkgdir"/etc/network/if-up.d
+	install -m775 "$srcdir"/dad.if-up "$pkgdir"/etc/network/if-up.d/dad
+
+	install -Dm644 "$srcdir"/acpid.logrotate \
+		"$pkgdir/etc/logrotate.d/acpid"
+
+	mkdir -p "$pkgdir"/var/lib/udhcpd
+	install -Dm644 "$builddir"/examples/udhcp/udhcpd.conf \
+		"$pkgdir"/etc/udhcpd.conf
+	cat >"$pkgdir"/etc/securetty <<EOF
+console
+tty1
+tty2
+tty3
+tty4
+tty5
+tty6
+tty7
+tty8
+tty9
+tty10
+tty11
+EOF
+}
+
+suid() {
+	pkgdesc="suid binaries of Busybox"
+	depends="${pkgname}"
+
+	cd "$_dyndir"
+	mkdir -p "$subpkgdir"/bin
+	install -m4111 bbsuid "$subpkgdir"/bin/bbsuid
+}
+
+static() {
+	pkgdesc="Statically linked Busybox"
+	mkdir -p "$subpkgdir"/bin
+	install -m755 "$_staticdir"/busybox.static \
+		"$subpkgdir"/bin/busybox.static
+}
+
+sha512sums="9926d211d0b4f34b513d934d7b111ebbf933c2dc31206bdd80426a62d47d5b1475b70bec5aaa14a26b94a202ab1465d994062a002750a312dcb8167096eb3719  busybox-1.26.2.tar.bz2
+ed16b7a38d99eb309ed03d3212ffd1c1993e292724665be2aaefcf645c9a37d1b0c5d24308dac7dbb093afde5b700961c55336d67be4f2bb788c85550e5f1de8  0001-ash-exec-busybox.static.patch
+cd6b0b59ca8006bfc545ba521a92de81be320c0dd3ed0a41d6a60339b73f44c80f1ac36fb05d35a8555fd173167b792f73ae279115d23d59f8f623ae01aed7d1  0002-app-location-for-vi-and-lspci.patch
+3fef7a3f47ca798859c5cf8d78bc36ed98c4b9f841a3593bca71b9242ca15719bbe9b683437f8ea61b9a5f6c31c9272b7f72dcb6ef6fc2a42fd3219e302113eb  0003-udhcpc-set-default-discover-retries-to-5.patch
+36d1090b35db49fd81ca5a39f5c5050f3173d628ac5e1b9b1c5873a3d0641942c9ffc5448533baa6c4512f4e539e8eb81d53c526a8f6e41b12f6f7606746793f  0004-ping-make-ping-work-without-root-privileges.patch
+6fc8fd411daec7989632b448ff73cbac05d8e4c497167f24c0b2a55517449f9c89fcc0131fa64973f163f0d5d0c5ed75613682b95b0f11900d340366693acf2a  0005-fbsplash-support-console-switching.patch
+7b6300130ca72b6842283b696c5138ac119b7b79d926ef336395246549b48a0f9c7c97c4708dfc45192d90898da3cad5b9bfe309072751615c012c8fcccfbb42  0006-fbsplash-support-image-and-bar-alignment-and-positio.patch
+11529fe845bbd4094dd57f99c8150aefeed69822d04bc0692975ea4f70c1691698d0b76d7522741eca9e45e8baaa877e55aed3ef21809bbaeecf67be7049bf70  0007-depmod-support-generating-kmod-binary-index-files.patch
+29589a224a432363620fa1b56c605ca93e39c879d263087f58c531aa4331ca366baa531b7464c41a8fdee96e7750b155e5e00f2bb0aeaa8da50d2cae01eab4f4  0008-login-move-check_securetty-to-libbb.patch
+fc291167b2e026166e283d98d2d61cb3c9701e5e83c09062692d0c5a77f3b838ba73065706461095039f9adcbd9a7e4ae60a8b578986d0499caa33789fea3050  0009-libbb-allow_blank-argument-for-ask_and_check_passwor.patch
+f82caa1dc4395f266b024a7face267a916a80ead95f3d392b10fd397d0fdf62703e3078357bc71962616d6531ea913aef80e1a7cdf8180bca70e723c7d331238  0010-su-FEATURE_SU_NULLOK_SECURE.patch
+16b513b34b3bf16002f14566aae66aab986403cb7a0f416c27264b739706bbd624a99fd37d5b56ff6efe623f3cc48aef3e8fe51c4ae2e94eda3fe9e8e618e3a1  0011-ntpd-postpone-hostname-resolution-if-fails-on-startu.patch
+361959788bc11b7f20d4029bb0f561759d270983b09c44fe2a01817378c4eb1c98cd8ef73e7ef8c168b7540170f58ddb36b9e4f80a97565f3fe3ba85b593a471  0012-diff-add-support-for-no-dereference.patch
+bf3e7c400e718fbc19fda19d7304ed938e5c59f45d5d1ba6eafd8f62a984d40419dbefd9f6840ac7f220d00abfae67e8f31be78b4c2e25310b265bca8beb91a2  0013-ash-make-shellexec-capable-of-using-separate-argv-0-.patch
+cb7aa4d5d22596bc8c6510cb653599dd8cf4c3a5312e93adfc6411d811376db2ad3b506a111322f46aa9929a5337e22a169da4ea250fd4b39e703adbc8792a2d  0014-ash-implement-exec-a-ARGV0-CMD-ARGV1.patch
+c37d1583cfb32e7aa077e7f4ea121dd3b2e3cf989a3dca2793126bcd89eb6d8eb6fae948085565807c2fb98d8dc92a2907cc03d988d1a47305d3e588ac268c5b  0015-syslogd-adjust-timezone-option.patch
+1375aa41038d80ef21ac3cd239999f813fd9a2e5ec062f34ed221d75e312f5e17e4bfcac4b20450139059dd586cfeda2b10c02b9cc17416c828e9a1ea3421601  udhcpc.patch
+2adfc6c71cfcc5df12edef13228c92b34c7782615e60effc97e6e7a9aa7e015c24c7b3950a8a9a2bf3ba5efd43a08ad45b16b35b03c90275807380e0600cb70d  fix-tests.patch
+f26e090f5de0096ba5c4d46989ebe0ab5fa64c8bf54cd37ddec302fddfde23eac914858d86cc52bf3b5780a8e81ea2612ef6e713df2828e52c606f86a6816f39  location-for-cpio.patch
+a9b1403c844c51934637215307dd9e2adb9458921047acff0d86dcf229b6e0027f4b2c6cdaa25a58407aad9d098fb5685d58eb5ff8d2aa3de4912cdea21fe54c  acpid.logrotate
+43e5b1c699fffea4e41621faee8b3d28774e5888070113ae98a940c6837efec617bac7c78c34a2c982cbcccf25a67691c480be8ba4b8e552eed8bb0d3a09dac8  busyboxconfig
+c1dd56509277c59751907a27f067f1622191ddfd498acfe390d83136d36a41f2bdfc2fd4daf35af77219a66fb00fea20483f34112afd5df2ccd9f36ab548e66f  bbsuid.c
+a1127c8a384294135e11500fde7ead33b73d24b11c21911b08447a4c4ef71d7a9965d6466f60f2da64e3b877213b0a3e924a5add3c5333ee3ecde8c2a91c5e02  dad.if-up
+4e7c291a70e879b74c0fc07c54a73ef50537d8be68fee6b2d409425c07afd2d67f9b6afcd8c33a7971014913cc5de85e45079681c9e77200c6cc2f34acfba6d2  nologin.c"
